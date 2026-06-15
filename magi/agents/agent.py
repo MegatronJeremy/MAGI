@@ -22,6 +22,7 @@ class Agent:
     temperature: float = 0.7
     weight: float = 1.0  # used by the weighted/aristocratic voting layer
     domains: list[str] = field(default_factory=list)  # for expertise routing later
+    instance: str | None = None  # optional BackendPool pin for assignment="pinned"
 
     async def respond(self, transcript: list[dict], task: str, context: str = "") -> str:
         system = (
@@ -33,12 +34,52 @@ class Agent:
             "- Reference what others said if relevant; push back when you disagree.\n"
         )
         ctx_block = f"BACKGROUND CONTEXT (about the person asking):\n{context}\n\n" if context else ""
-        debate = "\n".join(f"[{m['name']}]: {m['content']}" for m in transcript)
+        debate = "\n".join(
+            f"[round {m.get('round', '?')} {m.get('phase', 'turn')} | {m['name']}]: {m['content']}"
+            for m in transcript
+        )
         user = (
             f"{ctx_block}"
             f"TASK UNDER DISCUSSION:\n{task}\n\n"
             f"DEBATE SO FAR:\n{debate if debate else '(you speak first)'}\n\n"
             f"Give YOUR ({self.name}) contribution now."
+        )
+        return await self.backend.chat(
+            self.model, system, user, temperature=self.temperature
+        )
+
+    async def critique(
+            self,
+            task: str,
+            context: str,
+            proposals: list[dict],
+            transcript: list[dict],
+    ) -> str:
+        system = (
+            f"You are {self.name}, one member of a council of AI agents debating a problem.\n"
+            f"YOUR PERSONALITY AND BIAS:\n{self.persona}\n\n"
+            "Rules:\n"
+            "- Stay in character. Argue from YOUR perspective, even against the others.\n"
+            "- Challenge the weakest points in the other members' positions.\n"
+            "- Be concise: 2-4 sentences. No preamble.\n"
+        )
+        ctx_block = f"BACKGROUND CONTEXT (about the person asking):\n{context}\n\n" if context else ""
+        debate = "\n".join(
+            f"[round {m.get('round', '?')} {m.get('phase', 'turn')} | {m['name']}]: {m['content']}"
+            for m in transcript
+        )
+        other_positions = "\n".join(
+            f"[{m['name']}]: {m['content']}"
+            for m in proposals
+            if m["name"] != self.name
+        )
+        user = (
+            f"{ctx_block}"
+            f"TASK UNDER DISCUSSION:\n{task}\n\n"
+            f"DEBATE SO FAR, INCLUDING THIS ROUND'S PROPOSALS:\n{debate}\n\n"
+            f"HERE ARE THE OTHER MEMBERS' POSITIONS THIS ROUND:\n"
+            f"{other_positions if other_positions else '(no other proposals)'}\n\n"
+            "Challenge the weakest points from YOUR perspective, 2-4 sentences."
         )
         return await self.backend.chat(
             self.model, system, user, temperature=self.temperature

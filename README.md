@@ -87,6 +87,56 @@ python -m magi.cli.main "Pick a database for the project" \
 If you omit `--options`, the council derives the distinct positions from the
 debate before voting, so the vote is grounded in what was actually argued.
 
+### Automatic multi-GPU Ollama
+
+MAGI auto-discovers local Ollama servers by scanning ports starting at
+`--host`. The default scan checks `11434` through `11441`, keeps the live
+servers, and routes each propose/critique phase across that pool:
+
+```bash
+ollama serve
+
+OLLAMA_HOST=127.0.0.1:11435 ollama serve
+```
+
+Then run MAGI normally:
+
+```bash
+magi "Should we rewrite the renderer in Rust?" --no-tui
+```
+
+Use a wider scan if you run more ports:
+
+```bash
+magi "Compare these architecture options" --scan-ports 12 --no-tui
+```
+
+Pull the model on each server environment you intend to use:
+
+```bash
+ollama pull llama3.1:8b
+```
+
+Assignment policies:
+
+- `pooled` (default): each model call acquires the next free instance, so no
+  instance handles two calls at once and each propose/critique phase can run up
+  to N agents in parallel.
+- `round_robin`: agent index `i` uses instance `i % N`.
+- `pinned`: set an agent's optional `instance` field to an instance name; agents
+  without a pin fall back to round-robin.
+
+Mixed NVIDIA + AMD works because MAGI is not splitting one model across vendor
+backends. Each Ollama server is a separate process bound to one local GPU/vendor
+runtime, and MAGI only routes whole chat requests to those independent servers.
+Keep one process per GPU/backend family; do not expect one Ollama model load to
+span NVIDIA CUDA and AMD ROCm at the same time.
+
+Debate rounds are phased. In each round, all agents first produce blind
+proposals concurrently from the same frozen prior transcript. After those
+proposals are appended in stable council order, all agents critique concurrently
+with visibility into the proposal set.
+
 ## Extending it
 
 **New backend (vLLM, llama.cpp, remote):** implement the `Backend` protocol in
@@ -114,6 +164,6 @@ on the task topic before the debate starts.
 - **Convergence** — agents either over-agree (shared base model) or loop forever.
   Mitigated by sharp personas and a hard round cap. If they agree too fast, raise
   temperatures and make the prompts more opinionated.
-- **Speed** — sequential because one GPU means agents queue for the accelerator.
-  Parallelize (`asyncio.gather` in `Council.deliberate`) only with multiple model
-  instances or GPUs.
+- **Speed** — propose and critique phases dispatch concurrently. With a single
+  local instance, Ollama still serializes the real work; with multiple local
+  Ollama servers, automatic discovery and `--assignment pooled` keep them busy.

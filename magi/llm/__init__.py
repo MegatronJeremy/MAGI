@@ -15,3 +15,12 @@ __all__ = [
     "OllamaBackend",
     "get_backend",
 ]
+
+
+from .pool import ASSIGNMENT_POLICIES, BackendInstance, BackendPool
+
+__all__ += [
+    "ASSIGNMENT_POLICIES",
+    "BackendInstance",
+    "BackendPool",
+]

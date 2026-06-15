@@ -21,8 +21,8 @@ from magi.council import (
     Synthesizer,
     WeightedVote,
 )
-from magi.llm import get_backend
 from .options import derive_options
+from .pool_config import DEFAULT_SCAN_PORTS, build_backend_pool, route_agents_for_downstream
 
 # Base tallies selectable directly; "consul" is built after agents exist.
 BASE_TALLIES = {"majority": MajorityVote, "weighted": WeightedVote}
@@ -50,7 +50,12 @@ def _display_text(value: object) -> str:
 
 def _printer(kind: str, data: dict) -> None:
     if kind == "turn":
-        print(f"\n--- Round {data['round']} | {data['name']} ---\n{data['content']}")
+        phase = data.get("phase", "turn").upper()
+        print(f"\n--- Round {data['round']} | {phase} | {data['name']} ---\n{data['content']}")
+    elif kind == "phase":
+        print(f"\n>>> Round {data['round']} | {data['phase'].upper()}")
+    elif kind == "error":
+        print(f"\nWARNING: {data['message']}")
     elif kind == "ballot":
         print(f"\nBALLOT: {data['voter']}")
         print(f"  Choice: {_display_text(data['choice'])}")
@@ -77,8 +82,11 @@ def _printer(kind: str, data: dict) -> None:
 
 
 async def run(args):
-    backend = get_backend(args.backend, host=args.host)
+    pool = await build_backend_pool(args, warn=print)
+    primary = pool.primary_instance()
+    backend = primary.backend
     agents = get_council(args.council, backend, model=args.model)
+    route_agents_for_downstream(agents, pool)
 
     if args.tally == "consul":
         order = [a.name for a in agents]  # rotation order = council order
@@ -88,13 +96,14 @@ async def run(args):
 
     synthesizer = None
     if not args.no_synthesis:
-        synthesizer = Synthesizer(backend, model=args.model)
+        synthesizer = Synthesizer(backend, model=primary.model or args.model)
 
     council = Council(
         agents,
         rounds=args.rounds,
         tally=tally,
         synthesizer=synthesizer,
+        backend_pool=pool,
         on_event=_printer,
     )
 
@@ -133,13 +142,21 @@ async def run(args):
 def main():
     p = argparse.ArgumentParser(description="Local multi-agent MAGI council")
     p.add_argument("task", help="The question/problem for the council")
-    p.add_argument("--rounds", type=int, default=2, help="Debate rounds (default 2)")
+    p.add_argument("--rounds", type=int, default=3, help="Debate rounds (default 3)")
     p.add_argument("--options", nargs="+", default=None,
                    help="Explicit vote options; derived from debate if omitted")
     p.add_argument("--council", default="magi", help="Council preset (default: magi)")
     p.add_argument("--model", default="llama3.1:8b", help="Ollama model tag")
     p.add_argument("--backend", default="ollama", help="LLM backend (default: ollama)")
     p.add_argument("--host", default="http://localhost:11434", help="Backend host URL")
+    p.add_argument("--auto-instances", dest="auto_instances", action="store_true", default=True,
+                   help="Auto-discover local Ollama instances from --host upward (default)")
+    p.add_argument("--no-auto-instances", dest="auto_instances", action="store_false",
+                   help="Disable Ollama port discovery and use only --host")
+    p.add_argument("--scan-ports", type=int, default=DEFAULT_SCAN_PORTS,
+                   help=f"Number of local Ollama ports to scan from --host (default {DEFAULT_SCAN_PORTS})")
+    p.add_argument("--assignment", choices=["round_robin", "pinned", "pooled"], default="pooled",
+                   help="Backend assignment policy (default: pooled)")
     p.add_argument("--max-options", type=int, default=3,
                    help="Cap on derived vote options (default 3; keep <= agent count)")
     p.add_argument("--context", default=None,

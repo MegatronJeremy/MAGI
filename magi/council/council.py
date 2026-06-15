@@ -1,20 +1,18 @@
 """Council orchestrator.
 
 Composes a debate loop with pluggable context + tally strategies:
-  1. N rounds of debate (each agent sees everyone before it)
+  1. N phased rounds of debate
   2. all agents cast a structured vote
   3. strategy tallies -> decision
-
-Sequential by design: with one GPU the agents share the accelerator and
-speak in turn. Swap the inner loop to asyncio.gather only if you serve
-multiple model instances or have multiple GPUs.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Callable
 
 from magi.agents import Agent
+from magi.llm.pool import BackendPool
 from .context import ContextStrategy, KeepHeadTail
 from .synthesis import Synthesizer
 from .tally import MajorityVote, TallyStrategy
@@ -24,10 +22,11 @@ class Council:
     def __init__(
             self,
             agents: list[Agent],
-            rounds: int = 2,
+            rounds: int = 3,
             context: ContextStrategy | None = None,
             tally: TallyStrategy | None = None,
             synthesizer: Synthesizer | None = None,
+            backend_pool: BackendPool | None = None,
             on_event: Callable[[str, dict], None] | None = None,
     ):
         self.agents = agents
@@ -35,18 +34,89 @@ class Council:
         self.context = context or KeepHeadTail()
         self.tally_strategy = tally or MajorityVote()
         self.synthesizer = synthesizer  # optional; if None, no synthesis step
+        self.backend_pool = backend_pool
         self.on_event = on_event or (lambda kind, data: None)
 
     async def deliberate(self, task: str, context: str = "") -> list[dict]:
         transcript: list[dict] = []
         for rnd in range(1, self.rounds + 1):
-            for agent in self.agents:
-                ctx = self.context.trim(transcript)
-                reply = await agent.respond(ctx, task, context=context)
-                turn = {"name": agent.name, "content": reply, "round": rnd}
+            prior_transcript = list(transcript)
+            proposal_context = self.context.trim(prior_transcript)
+            self.on_event("phase", {"round": rnd, "phase": "propose"})
+            proposal_replies = await asyncio.gather(
+                *[
+                    self._agent_respond(agent, index, proposal_context, task, context)
+                    for index, agent in enumerate(self.agents)
+                ]
+            )
+            proposals = []
+            for agent, reply in zip(self.agents, proposal_replies):
+                turn = {
+                    "name": agent.name,
+                    "content": reply,
+                    "round": rnd,
+                    "phase": "propose",
+                }
+                proposals.append(turn)
                 transcript.append(turn)
                 self.on_event("turn", turn)
+
+            critique_context = self.context.trim(list(transcript))
+            self.on_event("phase", {"round": rnd, "phase": "critique"})
+            critique_replies = await asyncio.gather(
+                *[
+                    self._agent_critique(
+                        agent,
+                        index,
+                        task,
+                        context,
+                        proposals,
+                        critique_context,
+                    )
+                    for index, agent in enumerate(self.agents)
+                ]
+            )
+            for agent, reply in zip(self.agents, critique_replies):
+                turn = {
+                    "name": agent.name,
+                    "content": reply,
+                    "round": rnd,
+                    "phase": "critique",
+                }
+                transcript.append(turn)
+                self.on_event("turn", turn)
+
+            # A future "revise" phase can slot in here after critiques are frozen.
         return transcript
+
+    async def _agent_respond(
+            self,
+            agent: Agent,
+            index: int,
+            transcript: list[dict],
+            task: str,
+            context: str,
+    ) -> str:
+        if self.backend_pool is None:
+            return await agent.respond(transcript, task, context=context)
+        return await self.backend_pool.run_agent_method(
+            agent, index, "respond", transcript, task, context=context
+        )
+
+    async def _agent_critique(
+            self,
+            agent: Agent,
+            index: int,
+            task: str,
+            context: str,
+            proposals: list[dict],
+            transcript: list[dict],
+    ) -> str:
+        if self.backend_pool is None:
+            return await agent.critique(task, context, proposals, transcript)
+        return await self.backend_pool.run_agent_method(
+            agent, index, "critique", task, context, proposals, transcript
+        )
 
     async def vote(
             self, task: str, transcript: list[dict], options: list[str], context: str = ""

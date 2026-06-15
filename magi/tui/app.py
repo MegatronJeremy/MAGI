@@ -14,6 +14,7 @@ from textual.widgets import Footer, Header, LoadingIndicator, MarkdownViewer, Ri
 
 from magi.agents import get_council
 from magi.cli.options import derive_options
+from magi.cli.pool_config import build_backend_pool, route_agents_for_downstream
 from magi.council import (
     ConsulTieBreaker,
     Council,
@@ -21,7 +22,6 @@ from magi.council import (
     Synthesizer,
     WeightedVote,
 )
-from magi.llm import get_backend
 
 BASE_TALLIES = {"majority": MajorityVote, "weighted": WeightedVote}
 
@@ -184,9 +184,11 @@ class AgentPanel(Vertical):
     def on_mount(self) -> None:
         self.set_thinking(False)
 
-    def add_turn(self, round_number: int, content: str) -> None:
+    def add_turn(self, round_number: int, phase: str, content: str) -> None:
         escaped = escape(content.strip())
-        self.turn_log.write(f"[b]ROUND {round_number:02d}[/b]\n{escaped}\n")
+        self.turn_log.write(
+            f"[b]ROUND {round_number:02d}[/b] [dim]{escape(phase.upper())}[/dim]\n{escaped}\n"
+        )
 
     def set_thinking(self, active: bool) -> None:
         self.set_class(active, "active")
@@ -391,8 +393,11 @@ class MagiTuiApp(App[None]):
 
     async def _run_council(self) -> None:
         try:
-            backend = get_backend(self.args.backend, host=self.args.host)
+            pool = await build_backend_pool(args=self.args, warn=self._log_pool_message)
+            primary = pool.primary_instance()
+            backend = primary.backend
             agents = get_council(self.args.council, backend, model=self.args.model)
+            route_agents_for_downstream(agents, pool)
             self.agent_names = [agent.name for agent in agents]
 
             if self.args.tally == "consul":
@@ -402,13 +407,14 @@ class MagiTuiApp(App[None]):
 
             synthesizer = None
             if not self.args.no_synthesis:
-                synthesizer = Synthesizer(backend, model=self.args.model)
+                synthesizer = Synthesizer(backend, model=primary.model or self.args.model)
 
             council = Council(
                 agents,
                 rounds=self.args.rounds,
                 tally=tally,
                 synthesizer=synthesizer,
+                backend_pool=pool,
                 on_event=self._on_council_event,
             )
 
@@ -421,7 +427,7 @@ class MagiTuiApp(App[None]):
                 self._set_phase("CONTEXT", f"{len(context)} chars loaded")
 
             self._set_phase("DELIBERATION", "round 1")
-            self._set_thinking(agents[0].name if agents else None)
+            self._set_thinking_names(self.agent_names)
             transcript = await council.deliberate(self.args.task, context=context)
 
             if not self.args.no_synthesis:
@@ -461,10 +467,16 @@ class MagiTuiApp(App[None]):
     def _on_council_event(self, kind: str, data: dict) -> None:
         if kind == "turn":
             name = data["name"]
-            self.agent_panels[name].add_turn(data["round"], data["content"])
-            self._set_next_thinker_after_turn(name, data["round"])
+            self.agent_panels[name].add_turn(
+                data["round"],
+                data.get("phase", "turn"),
+                data["content"],
+            )
         elif kind == "synthesis":
             self.run_worker(self._update_synthesis(data["text"]))
+        elif kind == "phase":
+            self._set_phase("DELIBERATION", f"round {data['round']} {data['phase']}")
+            self._set_thinking_names(self.agent_names)
         elif kind == "ballot":
             self.ballots.append(data)
             self._render_ballot(data)
@@ -498,10 +510,18 @@ class MagiTuiApp(App[None]):
         for name, panel in self.agent_panels.items():
             panel.set_thinking(name == active_name)
 
+    def _set_thinking_names(self, active_names: list[str]) -> None:
+        active = set(active_names)
+        for name, panel in self.agent_panels.items():
+            panel.set_thinking(name in active)
+
     def _set_phase(self, label: str, detail: str = "") -> None:
         self.phase = CouncilPhase(label, detail)
         suffix = f" :: {detail}" if detail else ""
         self.sub_title = f"{label}{suffix}"
+
+    def _log_pool_message(self, message: str) -> None:
+        self.query_one("#vote-log", RichLog).write(f"[dim]{escape(message)}[/dim]")
 
     async def _update_synthesis(self, text: str) -> None:
         viewer = self.query_one("#synthesis", SynthesisViewer)

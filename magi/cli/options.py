@@ -19,6 +19,34 @@ _JUNK_OPTIONS = {
     ",",
 }
 
+_META_MARKERS = (
+    "re-evaluate",
+    "reevaluate",
+    "reassess",
+    "reconsider",
+    "revisit",
+    "gather more information",
+    "more data",
+    "wait and see",
+    "it depends",
+    "circle back",
+    "table the decision",
+)
+
+_META_PREFIXES = (
+    "let's",
+    "lets",
+    "let us",
+)
+
+
+def _whole_word_marker_pattern(marker: str) -> re.Pattern:
+    escaped = re.escape(marker).replace(r"\ ", r"\s+")
+    return re.compile(rf"(?<![A-Za-z0-9]){escaped}(?![A-Za-z0-9])", re.IGNORECASE)
+
+
+_META_PATTERNS = tuple(_whole_word_marker_pattern(marker) for marker in _META_MARKERS)
+
 
 def _extract_option_value(value: object) -> object:
     if not isinstance(value, dict):
@@ -82,6 +110,34 @@ def _dedupe(options: list[str]) -> list[str]:
     return unique
 
 
+def _primary_text(option: str) -> str:
+    text = option.strip()
+    text = re.sub(r"^\s*(?:[-*+]|\d+[.)])\s*", "", text)
+    text = text.strip().strip("\"'`").strip()
+    lowered = text.casefold()
+    for prefix in _META_PREFIXES:
+        if lowered.startswith(prefix):
+            return text[len(prefix):].lstrip(" '").strip()
+    return text
+
+
+def _is_action(option: str) -> bool:
+    """Reject options whose primary verb is deferral instead of an action."""
+
+    primary = _primary_text(option)
+    if not primary:
+        return False
+
+    first_clause = re.split(r"[,;:—–]|\b(?:after|once|when|if|unless)\b", primary, maxsplit=1)[0]
+    first_clause = first_clause.strip()
+    return not any(pattern.search(first_clause) for pattern in _META_PATTERNS)
+
+
+def _filter_actions(options: list[str], max_options: int) -> list[str]:
+    actions = [option for option in options if _is_action(option)]
+    return actions[:max_options]
+
+
 def parse_options(raw: str, max_options: int) -> list[str]:
     """Parse model-derived options while tolerating common markdown wrapping."""
 
@@ -119,7 +175,14 @@ async def derive_options(
 
     system = (
         "You derive voting options from a council debate.\n"
-        "Return ONLY a JSON array of short option strings. No markdown, no explanation."
+        f"Return ONLY a JSON array of 2 to {max_options} short option strings. "
+        "No markdown, no explanation.\n"
+        "Each option must be a concrete, mutually exclusive ACTION the voter can choose now. "
+        "Phrase each option as an imperative, such as \"Stay at AMD until the vest\" or "
+        "\"Leave now and forfeit equity\".\n"
+        "FORBIDDEN: meta-options or refusals to choose, including re-evaluate, reevaluate, "
+        "reassess, reconsider, revisit later, gather more information, more data, wait and see, "
+        "it depends, circle back, or table the decision."
     )
 
     ctx_block = f"BACKGROUND CONTEXT:\n{context}\n\n" if context else ""
@@ -129,7 +192,9 @@ async def derive_options(
         f"{ctx_block}"
         f"TASK:\n{task}\n\n"
         f"DEBATE:\n{debate}\n\n"
-        f"Derive 2 to {max_options} distinct voting options from the debate."
+        f"Derive 2 to {max_options} distinct, immediately-actionable voting options from the debate. "
+        "Use concrete imperatives only. Do not include any option whose main action is to delay, "
+        "re-evaluate, gather more information, or revisit later."
     )
 
     raw = await agent.backend.chat(
@@ -139,9 +204,8 @@ async def derive_options(
         temperature=0.2,
     )
 
-    options = parse_options(raw, max_options)
+    options = _filter_actions(parse_options(raw, max_options), max_options)
     if not options:
-        excerpt = raw.replace("\n", " ")[:120]
-        raise ValueError(f"derive_options could not parse vote options from model output: {excerpt}")
+        return ["Proceed", "Do not proceed"][:max_options]
 
     return options
