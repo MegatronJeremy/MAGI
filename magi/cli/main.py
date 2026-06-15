@@ -22,7 +22,12 @@ from magi.council import (
     WeightedVote,
 )
 from .options import derive_options
-from .pool_config import DEFAULT_SCAN_PORTS, build_backend_pool, route_agents_for_downstream
+from .pool_config import (
+    DEFAULT_OLLAMA_STARTUP_TIMEOUT,
+    DEFAULT_SCAN_PORTS,
+    build_backend_pool,
+    route_agents_for_downstream,
+)
 
 # Base tallies selectable directly; "consul" is built after agents exist.
 BASE_TALLIES = {"majority": MajorityVote, "weighted": WeightedVote}
@@ -153,6 +158,14 @@ def main():
                    help="Auto-discover local Ollama instances from --host upward (default)")
     p.add_argument("--no-auto-instances", dest="auto_instances", action="store_false",
                    help="Disable Ollama port discovery and use only --host")
+    p.add_argument("--auto-spawn-ollama", dest="auto_spawn_ollama", action="store_true", default=True,
+                   help="Auto-spawn missing local Ollama servers for detected GPUs (default)")
+    p.add_argument("--no-auto-spawn-ollama", dest="auto_spawn_ollama", action="store_false",
+                   help="Disable automatic Ollama server spawning")
+    p.add_argument("--ollama-command", default=None,
+                   help="Path to the ollama executable for auto-spawn")
+    p.add_argument("--ollama-startup-timeout", type=float, default=DEFAULT_OLLAMA_STARTUP_TIMEOUT,
+                   help=f"Seconds to wait for spawned Ollama servers (default {DEFAULT_OLLAMA_STARTUP_TIMEOUT:g})")
     p.add_argument("--scan-ports", type=int, default=DEFAULT_SCAN_PORTS,
                    help=f"Number of local Ollama ports to scan from --host (default {DEFAULT_SCAN_PORTS})")
     p.add_argument("--assignment", choices=["round_robin", "pinned", "pooled"], default="pooled",

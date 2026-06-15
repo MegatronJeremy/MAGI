@@ -103,9 +103,10 @@ class BackendPool:
         *,
         warn_dead: bool = True,
         warn_empty: bool = True,
+        warn_live: bool = True,
     ) -> int:
         checks = await asyncio.gather(
-            *(self._check_instance(instance) for instance in self.instances),
+            *(self._check_instance(instance, warn_live=warn_live) for instance in self.instances),
             return_exceptions=True,
         )
         live = []
@@ -174,11 +175,12 @@ class BackendPool:
         for instance in self.instances:
             self._queue.put_nowait(instance)
 
-    async def _check_instance(self, instance: BackendInstance) -> bool:
+    async def _check_instance(self, instance: BackendInstance, *, warn_live: bool = True) -> bool:
         if instance.backend_name != "ollama" or not instance.host:
-            self.warn(
-                f"backend instance {instance.name}: no Ollama health check available; assuming live"
-            )
+            if warn_live:
+                self.warn(
+                    f"backend instance {instance.name}: no Ollama health check available; assuming live"
+                )
             return True
 
         url = f"{instance.host.rstrip('/')}/api/tags"
@@ -197,7 +199,8 @@ class BackendPool:
             if instance.model in tags
             else f"model {instance.model} not listed; available: {', '.join(tags) or '(none)'}"
         )
-        self.warn(f"backend instance {instance.name} live at {instance.host}: {model_note}")
+        if warn_live:
+            self.warn(f"backend instance {instance.name} live at {instance.host}: {model_note}")
         return True
 
     async def _run_pooled(self, agent, method_name: str, *args, **kwargs) -> str:

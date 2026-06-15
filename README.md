@@ -7,6 +7,36 @@ Modeled on the MAGI system from Evangelion.
 Same base model, sharply divergent system prompts. The whole point is to make
 them **disagree** — if personas are too similar, the council just echoes itself.
 
+## The three personalities
+
+The default council is an Evangelion reference: MELCHIOR, BALTHASAR, and CASPER
+are named after the three MAGI supercomputers created by Dr. Naoko Akagi. In the
+show, the MAGI are organic computers implanted with three aspects of Naoko's
+personality through the Personality Transplant OS: Melchior as the scientist,
+Balthasar as the mother, and Casper as the woman.
+
+MAGI borrows that idea rather than copying it literally. Here, the three names
+become separate agent personas that force a problem through conflicting lenses
+before any synthesis or vote happens.
+
+The structure is also loosely inspired by Jungian psychology: useful judgment is
+not treated as one flat voice, but as a dialogue between competing psychic
+functions and archetypal pressures. MAGI makes that split explicit. Each agent is
+a deliberately biased part of the council, not a neutral assistant.
+
+- **MELCHIOR, Reason**: the scientist aspect. Logic, evidence, mechanisms,
+  first principles, and causal rigor. MELCHIOR attacks assumptions and distrusts
+  emotional or intuitive reasoning when it outruns evidence.
+- **BALTHASAR, Care**: the mother aspect. Protection, duty, continuity,
+  relationships, and long-term wellbeing. BALTHASAR asks who is helped, who is
+  harmed, and what obligations are being honored or abandoned.
+- **CASPER, Selfhood**: the woman aspect. Desire, autonomy, dignity, identity,
+  and lived experience. CASPER asks what the asker actually wants and what kind
+  of person the choice makes them.
+
+The intended effect is not consensus theater. It is structured disagreement:
+proposal, critique, synthesis, and optionally a vote.
+
 ## Project structure
 
 ```
@@ -89,26 +119,35 @@ debate before voting, so the vote is grounded in what was actually argued.
 
 ### Automatic multi-GPU Ollama
 
-MAGI auto-discovers local Ollama servers by scanning ports starting at
-`--host`. The default scan checks `11434` through `11441`, keeps the live
-servers, and routes each propose/critique phase across that pool:
-
-```bash
-ollama serve
-
-OLLAMA_HOST=127.0.0.1:11435 ollama serve
-```
-
-Then run MAGI normally:
+MAGI auto-discovers and auto-spawns local Ollama servers. On startup it scans
+ports starting at `--host` (`11434` through `11441` by default), keeps any live
+servers, detects local GPUs, then starts missing `ollama serve` processes on the
+next free ports so there is one server per detected GPU:
 
 ```bash
 magi "Should we rewrite the renderer in Rust?" --no-tui
 ```
 
-Use a wider scan if you run more ports:
+Useful controls:
 
 ```bash
 magi "Compare these architecture options" --scan-ports 12 --no-tui
+magi "Use only the already-running server" --no-auto-spawn-ollama --no-tui
+magi "Use a custom Ollama binary" --ollama-command /path/to/ollama --no-tui
+```
+
+Auto-spawn is best-effort. GPU detection uses `nvidia-smi` for NVIDIA and
+`rocm-smi`/Windows video-controller detection for AMD. Spawned processes receive
+`OLLAMA_HOST` plus vendor visibility masks (`CUDA_VISIBLE_DEVICES` for NVIDIA;
+`HIP_VISIBLE_DEVICES`, `ROCR_VISIBLE_DEVICES`, and `GPU_DEVICE_ORDINAL` for AMD)
+so each server is intended to bind to one GPU.
+
+You can still start servers manually if you want full control:
+
+```bash
+ollama serve
+
+OLLAMA_HOST=127.0.0.1:11435 ollama serve
 ```
 
 Pull the model on each server environment you intend to use:
