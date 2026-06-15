@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from magi.llm import Backend
-from .voting import parse_vote
+from .voting import UNPARSEABLE_VOTE_REASON, parse_vote
 
 
 @dataclass
@@ -62,6 +62,23 @@ class Agent:
         )
         raw = await self.backend.chat(self.model, system, user, temperature=0.2)
         ballot = parse_vote(raw, options)
+        if ballot.get("reason") == UNPARSEABLE_VOTE_REASON:
+            repair_system = (
+                f"You are {self.name}. You must repair an invalid vote.\n"
+                "Respond ONLY with valid JSON, no markdown, no prose:\n"
+                '{"choice": "<one of the options verbatim>", "reason": "<one sentence>"}'
+            )
+            repair_user = (
+                f"Your previous response was not parseable as a valid vote:\n{raw}\n\n"
+                "Choose exactly one of these options, verbatim:\n"
+                + "\n".join(f"- {option}" for option in options)
+            )
+            repaired_raw = await self.backend.chat(
+                self.model, repair_system, repair_user, temperature=0.0
+            )
+            repaired = parse_vote(repaired_raw, options)
+            if repaired.get("reason") != UNPARSEABLE_VOTE_REASON:
+                ballot = repaired
         ballot["voter"] = self.name
         ballot["weight"] = self.weight
         return ballot
