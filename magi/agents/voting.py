@@ -37,6 +37,18 @@ def _json_candidates(raw: str) -> list[str]:
 
 
 def _clean_choice(choice: object) -> str:
+    if isinstance(choice, dict):
+        for key in ("choice", "option", "title", "label", "name", "text"):
+            value = choice.get(key)
+            if value:
+                choice = value
+                break
+        else:
+            choice = next(
+                (value for value in choice.values() if isinstance(value, str) and value.strip()),
+                "",
+            )
+
     text = str(choice).strip()
     text = re.sub(r"^\s*(?:[-*+]|\d+[.)])\s*", "", text)
     return text.strip().strip(",;").strip().strip("\"'`").strip()

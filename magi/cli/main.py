@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import asyncio
 
 from magi.agents import get_council
@@ -28,12 +29,31 @@ BASE_TALLIES = {"majority": MajorityVote, "weighted": WeightedVote}
 TALLY_CHOICES = list(BASE_TALLIES) + ["consul"]
 
 
+def _display_text(value: object) -> str:
+    if isinstance(value, dict):
+        for key in ("choice", "option", "title", "label", "name", "text"):
+            option = value.get(key)
+            if option:
+                return str(option)
+        for option in value.values():
+            if isinstance(option, str) and option.strip():
+                return option
+    if isinstance(value, str) and value.strip().startswith("{") and value.strip().endswith("}"):
+        try:
+            parsed = ast.literal_eval(value)
+        except (SyntaxError, ValueError):
+            return value
+        if isinstance(parsed, dict):
+            return _display_text(parsed)
+    return str(value)
+
+
 def _printer(kind: str, data: dict) -> None:
     if kind == "turn":
         print(f"\n--- Round {data['round']} | {data['name']} ---\n{data['content']}")
     elif kind == "ballot":
         print(f"\nBALLOT: {data['voter']}")
-        print(f"  Choice: {data['choice']}")
+        print(f"  Choice: {_display_text(data['choice'])}")
         print(f"  Reason: {data['reason']}")
     elif kind == "synthesis":
         print(f"\n{'=' * 60}\nSYNTHESIS (neutral scribe)\n{'=' * 60}\n{data['text']}")
@@ -42,7 +62,7 @@ def _printer(kind: str, data: dict) -> None:
         print("Scores:")
         for option, score in data["scores"].items():
             marker = " (winner)" if option == data.get("winner") else ""
-            print(f"  - {option}: {score:g}{marker}")
+            print(f"  - {_display_text(option)}: {score:g}{marker}")
         if data.get("tie_break"):
             tb = data["tie_break"]
             print(f"Tie break: consul {tb['consul']} chose among {', '.join(tb['among'])}")
@@ -51,7 +71,7 @@ def _printer(kind: str, data: dict) -> None:
         else:
             print("Deadlock between:")
             for option in data["tie_between"]:
-                print(f"  - {option}")
+                print(f"  - {_display_text(option)}")
             print("(no consul configured; escalate to a human operator here.)")
         print("=" * 60)
 
@@ -105,7 +125,7 @@ async def run(args):
         )
     print("\nVOTING OPTIONS:")
     for index, option in enumerate(options, start=1):
-        print(f"  {index}. {option}")
+        print(f"  {index}. {_display_text(option)}")
 
     await council.vote(args.task, transcript, options, context=context)
 

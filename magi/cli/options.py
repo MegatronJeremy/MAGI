@@ -20,6 +20,22 @@ _JUNK_OPTIONS = {
 }
 
 
+def _extract_option_value(value: object) -> object:
+    if not isinstance(value, dict):
+        return value
+
+    for key in ("option", "choice", "title", "label", "name", "text"):
+        option = value.get(key)
+        if option:
+            return option
+
+    for option in value.values():
+        if isinstance(option, str) and option.strip():
+            return option
+
+    return ""
+
+
 def _without_code_fences(text: str) -> str:
     lines = [
         line
@@ -42,6 +58,7 @@ def _json_candidates(raw: str) -> list[str]:
 
 
 def _clean_option(value: object) -> str | None:
+    value = _extract_option_value(value)
     option = str(value).strip()
     option = re.sub(r"^\s*(?:[-*+]|\d+[.)])\s*", "", option)
     option = option.strip().strip(",;").strip().strip("\"'`").strip()

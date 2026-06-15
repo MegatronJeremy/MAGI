@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 from dataclasses import dataclass
 
 from rich.markup import escape
@@ -31,6 +32,25 @@ AGENT_STYLES = {
 }
 
 
+def _display_text(value: object) -> str:
+    if isinstance(value, dict):
+        for key in ("choice", "option", "title", "label", "name", "text"):
+            option = value.get(key)
+            if option:
+                return str(option)
+        for option in value.values():
+            if isinstance(option, str) and option.strip():
+                return option
+    if isinstance(value, str) and value.strip().startswith("{") and value.strip().endswith("}"):
+        try:
+            parsed = ast.literal_eval(value)
+        except (SyntaxError, ValueError):
+            return value
+        if isinstance(parsed, dict):
+            return _display_text(parsed)
+    return str(value)
+
+
 @dataclass(frozen=True)
 class CouncilPhase:
     label: str
@@ -54,6 +74,7 @@ class VerticalOnlyRichLog(RichLog):
         super().__init__(*args, **kwargs)
         self._entries: list[LogEntry] = []
         self._replaying_entries = False
+        self._processing_deferred_entries = False
         self._last_reflow_width = 0
 
     def write(
@@ -65,7 +86,7 @@ class VerticalOnlyRichLog(RichLog):
         scroll_end: bool | None = None,
         animate: bool = False,
     ):
-        if not self._replaying_entries:
+        if not self._replaying_entries and not self._processing_deferred_entries:
             stored_content = content.copy() if isinstance(content, Text) else content
             self._entries.append(
                 LogEntry(stored_content, width, expand, shrink, scroll_end, animate)
@@ -89,9 +110,23 @@ class VerticalOnlyRichLog(RichLog):
         event.stop()
         self.scroll_to(x=0, y=self.scroll_y, animate=False)
 
-    def on_resize(self) -> None:
+    def on_resize(self, event) -> None:
+        was_size_known = self._size_known
+        self._processing_deferred_entries = True
+        try:
+            super().on_resize(event)
+        finally:
+            self._processing_deferred_entries = False
+
         width = self.scrollable_content_region.width
-        if width > 0 and width != self._last_reflow_width:
+        if width <= 0 or not self._size_known:
+            return
+
+        if not was_size_known:
+            self._last_reflow_width = width
+            return
+
+        if width != self._last_reflow_width:
             self._last_reflow_width = width
             self._reflow_entries()
 
@@ -478,12 +513,12 @@ class MagiTuiApp(App[None]):
         vote_log = self.query_one("#vote-log", RichLog)
         vote_log.write("[b green]OPTIONS[/b green]")
         for index, option in enumerate(options, start=1):
-            vote_log.write(f"  [green]{index}.[/green] {escape(str(option))}")
+            vote_log.write(f"  [green]{index}.[/green] {escape(_display_text(option))}")
 
     def _render_ballot(self, ballot: dict) -> None:
         voter = ballot["voter"]
         accent = AGENT_STYLES.get(voter, {}).get("accent", "#9dffb0")
-        choice = escape(str(ballot["choice"]))
+        choice = escape(_display_text(ballot["choice"]))
         reason = escape(str(ballot["reason"]))
         vote_log = self.query_one("#vote-log", RichLog)
         if not self._ballot_header_shown:
@@ -506,7 +541,7 @@ class MagiTuiApp(App[None]):
             bar = "#" * width
             marker = "  WINNER" if option == winner else ""
             style = "bold #9dffb0" if option == winner else "#6fdc82"
-            label = escape(str(option))
+            label = escape(_display_text(option))
             vote_log.write(
                 f"[{style}]{label}[/]\n  [{style}]{bar:<24} {score:g}{marker}[/]"
             )
