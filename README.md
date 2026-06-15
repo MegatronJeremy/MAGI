@@ -176,6 +176,110 @@ proposals concurrently from the same frozen prior transcript. After those
 proposals are appended in stable council order, all agents critique concurrently
 with visibility into the proposal set.
 
+## MCP server for Claude Desktop / Claude Code
+
+MAGI can expose the same local council pipeline as an MCP server over stdio.
+Claude launches the server process, and the server still talks only to local
+Ollama instances.
+
+Install the project dependencies first:
+
+```bash
+pip install -e .
+```
+
+Run the server directly if you want to confirm it imports and waits for MCP
+stdio traffic:
+
+```bash
+python -m magi.mcp.server
+```
+
+Claude Desktop registration example for
+`claude_desktop_config.json` on this checkout:
+
+```json
+{
+  "mcpServers": {
+    "magi-council": {
+      "command": "C:\\Dev\\MAGI\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "magi.mcp.server"],
+      "cwd": "C:\\Dev\\MAGI",
+      "env": {
+        "MAGI_MODEL": "llama3.1:8b",
+        "MAGI_BACKEND": "ollama",
+        "MAGI_HOST": "http://localhost:11434",
+        "MAGI_ASSIGNMENT": "pooled",
+        "MAGI_AUTO_INSTANCES": "true",
+        "MAGI_AUTO_SPAWN_OLLAMA": "true"
+      }
+    }
+  }
+}
+```
+
+The primary MCP tool is:
+
+```text
+consult_council(question: str, context: str = "", rounds: int = 3, vote: bool = true)
+```
+
+It returns JSON with `synthesis`, optional `vote`, `transcript_summary`,
+`agents`, and `warnings`. Errors such as Ollama being down are returned as
+`{"ok": false, "error": "...", ...}` instead of crashing the MCP server.
+
+There is also:
+
+```text
+list_council()
+```
+
+Use the smoke helper before wiring Claude:
+
+```bash
+python -m magi.mcp.smoke --list
+python -m magi.mcp.smoke "Should we use SQLite or PostgreSQL?" --rounds 1 --no-vote
+```
+
+You can also use the MCP Inspector if you have Node available:
+
+```bash
+npx @modelcontextprotocol/inspector .\.venv\Scripts\python.exe -m magi.mcp.server
+```
+
+Example `consult_council` result shape:
+
+```json
+{
+  "ok": true,
+  "synthesis": "1. POINTS OF AGREEMENT ...",
+  "vote": {
+    "options": ["Use SQLite", "Use PostgreSQL"],
+    "scores": {"Use SQLite": 2, "Use PostgreSQL": 1},
+    "winner": "Use SQLite",
+    "tie_between": null,
+    "tie_break": null,
+    "ballots": []
+  },
+  "transcript_summary": {
+    "turn_count": 6,
+    "omitted_turns": 0,
+    "max_turn_chars": 700,
+    "rounds": [
+      {
+        "round": 1,
+        "phases": {
+          "propose": [{"agent": "MELCHIOR", "excerpt": "...", "chars": 312}],
+          "critique": [{"agent": "MELCHIOR", "excerpt": "...", "chars": 280}]
+        }
+      }
+    ]
+  },
+  "agents": [{"name": "MELCHIOR", "persona": "..."}],
+  "warnings": []
+}
+```
+
 ## Extending it
 
 **New backend (vLLM, llama.cpp, remote):** implement the `Backend` protocol in

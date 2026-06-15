@@ -3,8 +3,45 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 
+log = logging.getLogger(__name__)
+
+# Matches "OPTION A:", "Option B:", "A:", "B:" at the start of a line (with
+# optional whitespace). Captures the label letter and the rest of the line.
+_EXPLICIT_OPTION_RE = re.compile(
+    r"^\s*(?:option\s+)?([A-Za-z])\s*[:.)-]\s*(.+)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _extract_explicit_options(task: str) -> list[str] | None:
+    """Return verbatim options when the task already enumerates them.
+
+    Detects patterns like:
+      OPTION A: ...
+      OPTION B: ...
+      Option C: ...
+      A) ...
+      B) ...
+
+    Returns None if fewer than 2 are found (fall through to LLM derivation).
+    """
+    matches = _EXPLICIT_OPTION_RE.findall(task)
+    if len(matches) < 2:
+        return None
+
+    # Keep only consecutive alpha labels starting from the first one found
+    first_label = matches[0][0].upper()
+    start_ord = ord(first_label)
+    options: list[str] = []
+    for i, (label, text) in enumerate(matches):
+        if ord(label.upper()) == start_ord + i:
+            options.append(text.strip())
+        else:
+            break  # gap in sequence — stop; remaining may be sub-items
+    return options if len(options) >= 2 else None
 
 _JUNK_OPTIONS = {
     "",
@@ -173,26 +210,36 @@ async def derive_options(
 ) -> list[str]:
     max_options = max(2, max_options)
 
+    # If the task already enumerates explicit options (OPTION A/B/C), use them
+    # verbatim — no LLM call needed, and context cannot contaminate them.
+    explicit = _extract_explicit_options(task)
+    if explicit:
+        log.debug("derive_options: using %d explicit options from task", len(explicit))
+        return explicit[:max_options]
+
     system = (
         "You derive voting options from a council debate.\n"
         f"Return ONLY a JSON array of 2 to {max_options} short option strings. "
         "No markdown, no explanation.\n"
         "Each option must be a concrete, mutually exclusive ACTION the voter can choose now. "
-        "Phrase each option as an imperative, such as \"Stay at AMD until the vest\" or "
-        "\"Leave now and forfeit equity\".\n"
+        "Phrase each option as an imperative "
+        "(e.g. \"Launch the product now\" or \"Delay launch until Q2\").\n"
+        "CRITICAL: derive options ONLY from the TASK and DEBATE below. "
+        "Never invent details from any background context. "
         "FORBIDDEN: meta-options or refusals to choose, including re-evaluate, reevaluate, "
         "reassess, reconsider, revisit later, gather more information, more data, wait and see, "
         "it depends, circle back, or table the decision."
     )
 
-    ctx_block = f"BACKGROUND CONTEXT:\n{context}\n\n" if context else ""
+    # Deliberately omit `context` — personal background must not bleed into
+    # option labels, which become canonical strings matched against agent votes.
     debate = "\n".join(f"[{m['name']}]: {m['content']}" for m in transcript)
 
     user = (
-        f"{ctx_block}"
         f"TASK:\n{task}\n\n"
         f"DEBATE:\n{debate}\n\n"
-        f"Derive 2 to {max_options} distinct, immediately-actionable voting options from the debate. "
+        f"Derive 2 to {max_options} distinct, immediately-actionable voting options "
+        "from the TASK and DEBATE only. "
         "Use concrete imperatives only. Do not include any option whose main action is to delay, "
         "re-evaluate, gather more information, or revisit later."
     )

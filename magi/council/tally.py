@@ -16,6 +16,15 @@ class TallyStrategy(Protocol):
 
 
 def _result(scores: dict[str, float], ballots: list[dict]) -> dict:
+    if not scores:
+        # All ballots were abstentions (choice=None after repair failure)
+        return {
+            "winner": None,
+            "tie_between": None,
+            "scores": {},
+            "ballots": ballots,
+            "deadlock": "all ballots were abstentions",
+        }
     top_score = max(scores.values())
     leaders = [opt for opt, s in scores.items() if s == top_score]
     return {
@@ -32,7 +41,8 @@ class MajorityVote(TallyStrategy):
     def tally(self, ballots: list[dict], options: list[str] | None = None) -> dict:
         scores: dict[str, float] = defaultdict(float)
         for b in ballots:
-            scores[b["choice"]] += 1
+            if b.get("choice") is not None:
+                scores[b["choice"]] += 1
         return _result(scores, ballots)
 
 
@@ -42,7 +52,8 @@ class WeightedVote(TallyStrategy):
     def tally(self, ballots: list[dict], options: list[str] | None = None) -> dict:
         scores: dict[str, float] = defaultdict(float)
         for b in ballots:
-            scores[b["choice"]] += b.get("weight", 1.0)
+            if b.get("choice") is not None:
+                scores[b["choice"]] += b.get("weight", 1.0)
         return _result(scores, ballots)
 
 
@@ -80,7 +91,7 @@ class ConsulTieBreaker(TallyStrategy):
         consul_ballot = next((b for b in ballots if b.get("voter") == consul), None)
 
         decided = None
-        if consul_ballot and consul_ballot["choice"] in tied:
+        if consul_ballot and consul_ballot.get("choice") in tied:
             decided = consul_ballot["choice"]
         else:
             # consul abstained or voted for a non-tied option: fall back to the

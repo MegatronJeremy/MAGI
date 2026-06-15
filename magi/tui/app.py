@@ -12,18 +12,8 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Header, LoadingIndicator, MarkdownViewer, RichLog, Static
 
-from magi.agents import get_council
-from magi.cli.options import derive_options
-from magi.cli.pool_config import build_backend_pool, route_agents_for_downstream
-from magi.council import (
-    ConsulTieBreaker,
-    Council,
-    MajorityVote,
-    Synthesizer,
-    WeightedVote,
-)
+from magi.cli.runner import run_council
 
-BASE_TALLIES = {"majority": MajorityVote, "weighted": WeightedVote}
 
 AGENT_STYLES = {
     "MELCHIOR": {"class": "melchior", "accent": "#7df9ff"},
@@ -393,79 +383,22 @@ class MagiTuiApp(App[None]):
 
     async def _run_council(self) -> None:
         try:
-            pool = await build_backend_pool(args=self.args, warn=self._log_pool_message)
-            primary = pool.primary_instance()
-            backend = primary.backend
-            agents = get_council(self.args.council, backend, model=self.args.model)
-            route_agents_for_downstream(agents, pool)
-            self.agent_names = [agent.name for agent in agents]
-
-            if self.args.tally == "consul":
-                tally = ConsulTieBreaker(MajorityVote(), consul_order=self.agent_names)
-            else:
-                tally = BASE_TALLIES[self.args.tally]()
-
-            synthesizer = None
-            if not self.args.no_synthesis:
-                synthesizer = Synthesizer(backend, model=primary.model or self.args.model)
-
-            council = Council(
-                agents,
-                rounds=self.args.rounds,
-                tally=tally,
-                synthesizer=synthesizer,
-                backend_pool=pool,
-                on_event=self._on_council_event,
-            )
-
-            context = self.args.context or ""
-            if self.args.context_file:
-                from pathlib import Path
-
-                context = Path(self.args.context_file).read_text(encoding="utf-8")
-            if context:
-                self._set_phase("CONTEXT", f"{len(context)} chars loaded")
-
             self._set_phase("DELIBERATION", "round 1")
-            self._set_thinking_names(self.agent_names)
-            transcript = await council.deliberate(self.args.task, context=context)
-
-            if not self.args.no_synthesis:
-                self._set_phase("SYNTHESIS", "neutral scribe thinking")
-                self._set_thinking(None)
-                await council.synthesize(self.args.task, transcript, context=context)
-
-            if self.args.no_vote:
-                self._set_phase("COMPLETE", "vote skipped")
-                self._set_thinking(None)
-                return
-
-            options = self.args.options
-            if not options:
-                self._set_phase("OPTIONS", "deriving vote choices")
-                self._set_thinking(agents[0].name if agents else None)
-                options = await derive_options(
-                    agents[0],
-                    self.args.task,
-                    transcript,
-                    context=context,
-                    max_options=self.args.max_options,
-                )
-                self._set_thinking(None)
-
-            self._show_options(options)
-            self._set_phase("VOTE", "collecting ballots")
-            self._set_thinking(agents[0].name if agents else None)
-            await council.vote(self.args.task, transcript, options, context=context)
+            result = await run_council(self.args, on_event=self._on_council_event)
             self._set_thinking(None)
-            self._set_phase("COMPLETE", "session finished")
+            detail = "vote skipped" if result.vote_result is None else "session finished"
+            self._set_phase("COMPLETE", detail)
         except Exception as exc:  # pragma: no cover - visible runtime failure path
             self._set_thinking(None)
             self._set_phase("ERROR", str(exc))
             self.query_one("#vote-log", RichLog).write(f"[b red]ERROR[/b red] {escape(str(exc))}")
 
     def _on_council_event(self, kind: str, data: dict) -> None:
-        if kind == "turn":
+        if kind == "warning":
+            self._log_pool_message(data["message"])
+        elif kind == "context":
+            self._set_phase("CONTEXT", f"{data['chars']} chars loaded")
+        elif kind == "turn":
             name = data["name"]
             self.agent_panels[name].add_turn(
                 data["round"],
@@ -477,6 +410,16 @@ class MagiTuiApp(App[None]):
         elif kind == "phase":
             self._set_phase("DELIBERATION", f"round {data['round']} {data['phase']}")
             self._set_thinking_names(self.agent_names)
+        elif kind == "agents":
+            self.agent_names = data["names"]
+        elif kind == "options" and data.get("status") == "deriving":
+            self._set_phase("OPTIONS", "deriving vote choices")
+            self._set_thinking(self.agent_names[0] if self.agent_names else None)
+        elif kind == "options" and data.get("status") == "ready":
+            self._set_thinking(None)
+            self._show_options(data["options"])
+            self._set_phase("VOTE", "collecting ballots")
+            self._set_thinking(self.agent_names[0] if self.agent_names else None)
         elif kind == "ballot":
             self.ballots.append(data)
             self._render_ballot(data)

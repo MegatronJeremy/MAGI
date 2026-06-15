@@ -21,7 +21,9 @@ def magi_council(backend: Backend, model: str = MODEL) -> list[Agent]:
             backend=backend,
             model=model,
             temperature=0.5,
-            domains=["reason", "logic", "data", "engineering"],
+            domains=["reason", "logic", "data", "mechanisms", "first principles"],
+            forbidden=["emotions", "fulfillment", "identity", "wellbeing",
+                       "what kind of person the choice makes someone"],
             persona=(
                 "Reason, modeled on the scientist aspect. You reason from logic, "
                 "data, mechanisms and first principles. You distrust wishful thinking, vague "
@@ -34,7 +36,8 @@ def magi_council(backend: Backend, model: str = MODEL) -> list[Agent]:
             backend=backend,
             model=model,
             temperature=0.7,
-            domains=["care", "risk", "safety", "relationships"],
+            domains=["care", "risk", "safety", "duty", "relationships", "second-order consequences"],
+            forbidden=["pure financial optimization", "abstract identity and self-actualization arguments"],
             persona=(
                 "Care, modeled on the mother aspect. You weigh protection, duty, "
                 "continuity, relationships and long-term wellbeing. You ask who is helped, "
@@ -48,7 +51,9 @@ def magi_council(backend: Backend, model: str = MODEL) -> list[Agent]:
             backend=backend,
             model=model,
             temperature=0.85,
-            domains=["selfhood", "identity", "desire", "strategy"],
+            domains=["selfhood", "identity", "desire", "autonomy", "dignity",
+                     "what kind of person the choice makes someone"],
+            forbidden=["detailed financial calculation", "risk-accounting and downside enumeration"],
             persona=(
                 "Selfhood, modeled on the woman aspect: personal desire, identity, "
                 "autonomy, dignity and lived experience. You ask what the asker actually "

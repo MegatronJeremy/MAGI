@@ -12,26 +12,13 @@ from __future__ import annotations
 import argparse
 import ast
 import asyncio
+import logging
 
-from magi.agents import get_council
-from magi.council import (
-    Council,
-    ConsulTieBreaker,
-    MajorityVote,
-    Synthesizer,
-    WeightedVote,
-)
-from .options import derive_options
+from .runner import TALLY_CHOICES, run_council
 from .pool_config import (
     DEFAULT_OLLAMA_STARTUP_TIMEOUT,
     DEFAULT_SCAN_PORTS,
-    build_backend_pool,
-    route_agents_for_downstream,
 )
-
-# Base tallies selectable directly; "consul" is built after agents exist.
-BASE_TALLIES = {"majority": MajorityVote, "weighted": WeightedVote}
-TALLY_CHOICES = list(BASE_TALLIES) + ["consul"]
 
 
 def _display_text(value: object) -> str:
@@ -61,6 +48,16 @@ def _printer(kind: str, data: dict) -> None:
         print(f"\n>>> Round {data['round']} | {data['phase'].upper()}")
     elif kind == "error":
         print(f"\nWARNING: {data['message']}")
+    elif kind == "warning":
+        print(f"\n{data['message']}")
+    elif kind == "context":
+        print(f"(using {data['chars']} chars of background context)")
+    elif kind == "options" and data.get("status") == "deriving":
+        print("\nDeriving options from the debate...")
+    elif kind == "options" and data.get("status") == "ready":
+        print("\nVOTING OPTIONS:")
+        for index, option in enumerate(data["options"], start=1):
+            print(f"  {index}. {_display_text(option)}")
     elif kind == "ballot":
         print(f"\nBALLOT: {data['voter']}")
         print(f"  Choice: {_display_text(data['choice'])}")
@@ -87,61 +84,8 @@ def _printer(kind: str, data: dict) -> None:
 
 
 async def run(args):
-    pool = await build_backend_pool(args, warn=print)
-    primary = pool.primary_instance()
-    backend = primary.backend
-    agents = get_council(args.council, backend, model=args.model)
-    route_agents_for_downstream(agents, pool)
-
-    if args.tally == "consul":
-        order = [a.name for a in agents]  # rotation order = council order
-        tally = ConsulTieBreaker(MajorityVote(), consul_order=order)
-    else:
-        tally = BASE_TALLIES[args.tally]()
-
-    synthesizer = None
-    if not args.no_synthesis:
-        synthesizer = Synthesizer(backend, model=primary.model or args.model)
-
-    council = Council(
-        agents,
-        rounds=args.rounds,
-        tally=tally,
-        synthesizer=synthesizer,
-        backend_pool=pool,
-        on_event=_printer,
-    )
-
     print(f"\n{'=' * 60}\nTASK: {args.task}\n{'=' * 60}")
-
-    context = args.context or ""
-    if args.context_file:
-        from pathlib import Path
-        context = Path(args.context_file).read_text(encoding="utf-8")
-    if context:
-        print(f"(using {len(context)} chars of background context)")
-
-    transcript = await council.deliberate(args.task, context=context)
-
-    # Synthesis first; it's the substantive output. The vote is an optional,
-    # lossy summary on top of it.
-    if not args.no_synthesis:
-        await council.synthesize(args.task, transcript, context=context)
-
-    if args.no_vote:
-        return
-
-    options = args.options
-    if not options:
-        print("\nDeriving options from the debate...")
-        options = await derive_options(
-            agents[0], args.task, transcript, context=context, max_options=args.max_options
-        )
-    print("\nVOTING OPTIONS:")
-    for index, option in enumerate(options, start=1):
-        print(f"  {index}. {_display_text(option)}")
-
-    await council.vote(args.task, transcript, options, context=context)
+    await run_council(args, on_event=_printer, warn=print)
 
 
 def main():
@@ -176,17 +120,21 @@ def main():
                    help="Background context about the asker, injected into prompts")
     p.add_argument("--context-file", default=None,
                    help="Path to a text file with background context (overrides --context)")
-    p.add_argument("--tally", choices=TALLY_CHOICES, default="majority",
-                   help="Vote tally: majority | weighted | consul (rotating tie-breaker)")
+    p.add_argument("--tally", choices=TALLY_CHOICES, default="consul",
+                   help="Vote tally: consul (default, rotating tie-breaker) | majority | weighted")
     p.add_argument("--no-synthesis", action="store_true",
                    help="Skip the neutral synthesis step")
     p.add_argument("--no-vote", action="store_true",
                    help="Skip voting; produce only the synthesis (recommended for nuanced questions)")
+    p.add_argument("--debug", action="store_true",
+                   help="Enable DEBUG logging (shows vote snap decisions)")
     p.add_argument("--tui", dest="tui", action="store_true", default=True,
                    help="Launch the live MAGI terminal UI (default)")
     p.add_argument("--no-tui", dest="tui", action="store_false",
                    help="Use plain-text terminal output instead of the TUI")
     args = p.parse_args()
+    if getattr(args, "debug", False):
+        logging.basicConfig(level=logging.DEBUG, format="[%(name)s] %(message)s")
     if args.tui:
         from magi.tui.app import run_tui
 
