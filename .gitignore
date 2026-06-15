@@ -1,0 +1,32 @@
+﻿# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Packaging / build artifacts (from pip install -e .)
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+*.egg-link
+__editable__.*
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local model files / caches
+*.gguf
+/models/
+/cache/
