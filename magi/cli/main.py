@@ -13,7 +13,13 @@ import argparse
 import asyncio
 
 from magi.agents import get_council
-from magi.council import Council, ConsulTieBreaker, MajorityVote, WeightedVote
+from magi.council import (
+    Council,
+    ConsulTieBreaker,
+    MajorityVote,
+    Synthesizer,
+    WeightedVote,
+)
 from magi.llm import get_backend
 from .options import derive_options
 
@@ -27,6 +33,8 @@ def _printer(kind: str, data: dict) -> None:
         print(f"\n── Round {data['round']} · {data['name']} ──\n{data['content']}")
     elif kind == "ballot":
         print(f"\n🗳  {data['voter']} → {data['choice']}  ({data['reason']})")
+    elif kind == "synthesis":
+        print(f"\n{'=' * 60}\nSYNTHESIS (neutral scribe)\n{'=' * 60}\n{data['text']}")
     elif kind == "result":
         print(f"\n{'=' * 60}\nSCORES: {data['scores']}")
         if data.get("tie_break"):
@@ -50,10 +58,15 @@ async def run(args):
     else:
         tally = BASE_TALLIES[args.tally]()
 
+    synthesizer = None
+    if not args.no_synthesis:
+        synthesizer = Synthesizer(backend, model=args.model)
+
     council = Council(
         agents,
         rounds=args.rounds,
         tally=tally,
+        synthesizer=synthesizer,
         on_event=_printer,
     )
 
@@ -68,10 +81,20 @@ async def run(args):
 
     transcript = await council.deliberate(args.task, context=context)
 
+    # Synthesis first — it's the substantive output. The vote is an optional,
+    # lossy summary on top of it.
+    if not args.no_synthesis:
+        await council.synthesize(args.task, transcript, context=context)
+
+    if args.no_vote:
+        return
+
     options = args.options
     if not options:
         print("\n— deriving options from the debate —")
-        options = await derive_options(agents[0], args.task, transcript, context=context)
+        options = await derive_options(
+            agents[0], args.task, transcript, context=context, max_options=args.max_options
+        )
     print(f"\nVOTING OPTIONS: {options}")
 
     await council.vote(args.task, transcript, options, context=context)
@@ -87,12 +110,18 @@ def main():
     p.add_argument("--model", default="llama3.1:8b", help="Ollama model tag")
     p.add_argument("--backend", default="ollama", help="LLM backend (default: ollama)")
     p.add_argument("--host", default="http://localhost:11434", help="Backend host URL")
+    p.add_argument("--max-options", type=int, default=3,
+                   help="Cap on derived vote options (default 3; keep <= agent count)")
     p.add_argument("--context", default=None,
                    help="Background context about the asker, injected into prompts")
     p.add_argument("--context-file", default=None,
                    help="Path to a text file with background context (overrides --context)")
-    p.add_argument("--tally", choices=TALLY_CHOICES, default="consul",
+    p.add_argument("--tally", choices=TALLY_CHOICES, default="majority",
                    help="Vote tally: majority | weighted | consul (rotating tie-breaker)")
+    p.add_argument("--no-synthesis", action="store_true",
+                   help="Skip the neutral synthesis step")
+    p.add_argument("--no-vote", action="store_true",
+                   help="Skip voting; produce only the synthesis (recommended for nuanced questions)")
     asyncio.run(run(p.parse_args()))
 
 

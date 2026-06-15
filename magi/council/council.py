@@ -12,56 +12,63 @@ multiple model instances or have multiple GPUs.
 
 from __future__ import annotations
 
+from typing import Callable
+
+from magi.agents import Agent
+from .context import ContextStrategy, KeepHeadTail
+from .synthesis import Synthesizer
+from .tally import MajorityVote, TallyStrategy
+
 
 class Council:
-    def __init__(self, agents, rounds: int, tally, on_event=None):
+    def __init__(
+            self,
+            agents: list[Agent],
+            rounds: int = 2,
+            context: ContextStrategy | None = None,
+            tally: TallyStrategy | None = None,
+            synthesizer: Synthesizer | None = None,
+            on_event: Callable[[str, dict], None] | None = None,
+    ):
         self.agents = agents
         self.rounds = rounds
-        self.tally = tally
-        self.on_event = on_event
+        self.context = context or KeepHeadTail()
+        self.tally_strategy = tally or MajorityVote()
+        self.synthesizer = synthesizer  # optional; if None, no synthesis step
+        self.on_event = on_event or (lambda kind, data: None)
 
     async def deliberate(self, task: str, context: str = "") -> list[dict]:
         transcript: list[dict] = []
-
-        for round_no in range(1, self.rounds + 1):
+        for rnd in range(1, self.rounds + 1):
             for agent in self.agents:
-                content = await agent.respond(transcript, task, context=context)
-                turn = {
-                    "round": round_no,
-                    "name": agent.name,
-                    "content": content,
-                }
+                ctx = self.context.trim(transcript)
+                reply = await agent.respond(ctx, task, context=context)
+                turn = {"name": agent.name, "content": reply, "round": rnd}
                 transcript.append(turn)
-
-                if self.on_event:
-                    self.on_event("turn", turn)
-
+                self.on_event("turn", turn)
         return transcript
 
     async def vote(
-            self,
-            task: str,
-            transcript: list[dict],
-            options: list[str],
-            context: str = "",
+            self, task: str, transcript: list[dict], options: list[str], context: str = ""
     ) -> dict:
+        ctx = self.context.trim(transcript)
         ballots = []
-
         for agent in self.agents:
-            ballot = await agent.vote(
-                transcript,
-                task,
-                options,
-                context=context,
-            )
+            ballot = await agent.vote(ctx, task, options, context=context)
             ballots.append(ballot)
-
-            if self.on_event:
-                self.on_event("ballot", ballot)
-
-        result = self.tally.tally(ballots, options)
-
-        if self.on_event:
-            self.on_event("result", result)
-
+            self.on_event("ballot", ballot)
+        result = self.tally_strategy.tally(ballots)
+        self.on_event("result", result)
         return result
+
+    async def synthesize(
+            self, task: str, transcript: list[dict], context: str = ""
+    ) -> str | None:
+        """Neutral synthesis of the full debate. Returns None if no synthesizer
+        is configured. Uses the Untrimmed transcript on purpose: the scribe
+        should see everything, even if individual agents saw a trimmed view."""
+        if self.synthesizer is None:
+            return None
+        text = await self.synthesizer.synthesize(task, transcript, context=context)
+        self.on_event("synthesis", {"text": text})
+        return text

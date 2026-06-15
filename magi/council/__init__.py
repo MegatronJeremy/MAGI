@@ -1,5 +1,6 @@
 from .context import ContextStrategy, KeepHeadTail
 from .council import Council
+from .synthesis import Synthesizer
 from .tally import MajorityVote, TallyStrategy, WeightedVote, ConsulTieBreaker
 
 __all__ = [
@@ -10,4 +11,5 @@ __all__ = [
     "TallyStrategy",
     "WeightedVote",
     "ConsulTieBreaker",
+    "Synthesizer",
 ]

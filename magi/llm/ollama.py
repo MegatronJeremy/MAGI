@@ -8,10 +8,8 @@ from __future__ import annotations
 
 import httpx
 
-from .base import Backend
 
-
-class OllamaBackend(Backend):
+class OllamaBackend:
     def __init__(self, host: str = "http://localhost:11434", timeout: float = 120.0):
         self.url = f"{host.rstrip('/')}/api/chat"
         self.timeout = timeout

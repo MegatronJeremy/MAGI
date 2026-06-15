@@ -8,7 +8,10 @@ async def derive_options(
         task: str,
         transcript: list[dict],
         context: str = "",
+        max_options: int = 3,
 ) -> list[str]:
+    max_options = max(2, max_options)
+
     system = (
         "You derive voting options from a council debate.\n"
         "Return ONLY a JSON array of short option strings. No markdown, no explanation."
@@ -21,7 +24,7 @@ async def derive_options(
         f"{ctx_block}"
         f"TASK:\n{task}\n\n"
         f"DEBATE:\n{debate}\n\n"
-        "Derive 2 to 5 distinct voting options from the debate."
+        f"Derive 2 to {max_options} distinct voting options from the debate."
     )
 
     raw = await agent.backend.chat(
@@ -36,13 +39,15 @@ async def derive_options(
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
-        return [
+        options = [
             line.strip("- ").strip()
             for line in raw.splitlines()
             if line.strip()
         ]
+        return options[:max_options]
 
     if not isinstance(parsed, list):
         raise ValueError("derive_options expected the model to return a JSON list")
 
-    return [str(option).strip() for option in parsed if str(option).strip()]
+    options = [str(option).strip() for option in parsed if str(option).strip()]
+    return options[:max_options]
