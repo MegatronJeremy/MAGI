@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import httpx
 
-from base import Backend
+from .base import Backend
 
 
 class OllamaBackend(Backend):
@@ -17,13 +17,13 @@ class OllamaBackend(Backend):
         self.timeout = timeout
 
     async def chat(
-        self,
-        model: str,
-        system: str,
-        user: str,
-        *,
-        temperature: float = 0.7,
-        **kwargs,
+            self,
+            model: str,
+            system: str,
+            user: str,
+            *,
+            temperature: float = 0.7,
+            **kwargs,
     ) -> str:
         payload = {
             "model": model,

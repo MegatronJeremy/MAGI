@@ -30,3 +30,6 @@ Thumbs.db
 *.gguf
 /models/
 /cache/
+
+# Context files
+context_*.txt

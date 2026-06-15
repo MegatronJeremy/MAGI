@@ -1,0 +1,30 @@
+﻿The person asking is a 25-year-old software engineer based in Belgrade, currently
+working at AMD on Unreal Engine plugin development (FSR upscaling, frame
+interpolation, motion vectors). The role feels unfulfilling relative to their
+technical identity; their real interest is compiler engineering and GPU/accelerator
+infrastructure. They are finishing a Master's in Computer Engineering (expected
+October 2026).
+
+Current compensation: ~EUR 2500 net/month (~EUR 30k net/year). AMD equity: 120
+unvested RSUs total, 30 vesting in September 2026 and the remaining 90 after that;
+at ~USD 511/share that is roughly USD 61k gross unvested.
+
+They computed a break-even for leaving: with ZERO equity match at a new role they
+would need ~EUR 4000 net/month; with a partial match ~EUR 3.2-3.4k; with a full
+equity match ~EUR 3k (just above current pay).
+
+Active opportunities: Tenstorrent (Belgrade, compiler/MLIR role) deep in the
+interview pipeline, and Nebius (GPU/inference). They rate Tenstorrent's long-term
+ceiling highest and Nebius as the most immediately marketable fit given the GPU
+inference boom.
+
+Their stated current plan is to STAY at AMD for stability and to rebuild structure
+and a life outside work, and to revisit ONLY if a concrete offer arrives — at which
+point they would put the full unvested equity on the table and ask the new employer
+for an equity buyout plus signing bonus before deciding. They assume the new
+employer "definitely won't" match equity, but have acknowledged this is an untested
+assumption.
+
+Portfolio strengths: custom compiler/linker/emulator projects, a custom ISA with an
+LLVM backend on FPGA, a RISC-V OS, and a CUDA GEMM autotuner benchmarked on H100.
+Prior experience at a games studio doing GPU compute and ray tracing.

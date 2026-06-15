@@ -2,16 +2,47 @@
 
 from __future__ import annotations
 
-from magi.agents import Agent
 
-
-async def derive_options(agent: Agent, task: str, transcript: list[dict]) -> list[str]:
-    debate = "\n".join(f"[{m['name']}]: {m['content']}" for m in transcript)
+async def derive_options(
+        agent,
+        task: str,
+        transcript: list[dict],
+        context: str = "",
+) -> list[str]:
     system = (
-        "You summarize a debate into 2-4 distinct, mutually exclusive options to "
-        "vote on. Respond as a plain newline-separated list. No numbering, no commentary."
+        "You derive voting options from a council debate.\n"
+        "Return ONLY a JSON array of short option strings. No markdown, no explanation."
     )
-    user = f"TASK:\n{task}\n\nDEBATE:\n{debate}\n\nDistinct options:"
-    raw = await agent.backend.chat(agent.model, system, user, temperature=0.3)
-    opts = [line.strip("-•* \t") for line in raw.splitlines() if line.strip()]
-    return opts[:4] if opts else ["Proceed", "Do not proceed"]
+
+    ctx_block = f"BACKGROUND CONTEXT:\n{context}\n\n" if context else ""
+    debate = "\n".join(f"[{m['name']}]: {m['content']}" for m in transcript)
+
+    user = (
+        f"{ctx_block}"
+        f"TASK:\n{task}\n\n"
+        f"DEBATE:\n{debate}\n\n"
+        "Derive 2 to 5 distinct voting options from the debate."
+    )
+
+    raw = await agent.backend.chat(
+        agent.model,
+        system,
+        user,
+        temperature=0.2,
+    )
+
+    import json
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return [
+            line.strip("- ").strip()
+            for line in raw.splitlines()
+            if line.strip()
+        ]
+
+    if not isinstance(parsed, list):
+        raise ValueError("derive_options expected the model to return a JSON list")
+
+    return [str(option).strip() for option in parsed if str(option).strip()]
