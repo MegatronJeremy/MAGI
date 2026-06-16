@@ -16,6 +16,7 @@ import logging
 
 from .runner import TALLY_CHOICES, run_council
 from .pool_config import (
+    DEFAULT_MANAGED_PORT_BASE,
     DEFAULT_OLLAMA_STARTUP_TIMEOUT,
     DEFAULT_SCAN_PORTS,
 )
@@ -111,7 +112,13 @@ def main():
     p.add_argument("--ollama-startup-timeout", type=float, default=DEFAULT_OLLAMA_STARTUP_TIMEOUT,
                    help=f"Seconds to wait for spawned Ollama servers (default {DEFAULT_OLLAMA_STARTUP_TIMEOUT:g})")
     p.add_argument("--scan-ports", type=int, default=DEFAULT_SCAN_PORTS,
-                   help=f"Number of local Ollama ports to scan from --host (default {DEFAULT_SCAN_PORTS})")
+                   help=f"Number of managed ports to scan/spawn (default {DEFAULT_SCAN_PORTS})")
+    p.add_argument("--managed-port-base", type=int, default=DEFAULT_MANAGED_PORT_BASE,
+                   dest="managed_port_base",
+                   help=f"Base port for MAGI-managed Ollama servers (default {DEFAULT_MANAGED_PORT_BASE})")
+    p.add_argument("--backends", nargs="+", default=None, metavar="HOST",
+                   help="Explicit backend URLs (e.g. localhost:11434 localhost:11435); "
+                        "skips auto-discovery and auto-spawn entirely")
     p.add_argument("--assignment", choices=["round_robin", "pinned", "pooled"], default="pooled",
                    help="Backend assignment policy (default: pooled)")
     p.add_argument("--max-options", type=int, default=3,

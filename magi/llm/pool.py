@@ -120,11 +120,11 @@ class BackendPool:
             if result:
                 live.append(instance)
 
+        self.instances = live
+        self._reset_queue()
         if live:
-            self.instances = live
-            self._reset_queue()
             return len(live)
-        elif warn_empty:
+        if warn_empty:
             self.warn("WARNING no backend instances passed health check; continuing anyway")
         return 0
 
