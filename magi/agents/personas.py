@@ -10,7 +10,7 @@ from __future__ import annotations
 from magi.llm import Backend
 from .agent import Agent
 
-MODEL = "llama3.1:8b"
+MODEL = "qwen3:14b"
 
 
 def magi_council(backend: Backend, model: str = MODEL) -> list[Agent]:

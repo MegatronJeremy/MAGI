@@ -43,13 +43,15 @@ def _mcp_args(question: str, context: str, rounds: int, vote: bool):
         context=context,
         rounds=max(1, rounds),
         council=os.environ.get("MAGI_COUNCIL", "magi"),
-        model=os.environ.get("MAGI_MODEL", "llama3.1:8b"),
+        model=os.environ.get("MAGI_MODEL", "qwen3:14b"),
+        model_secondary=os.environ.get("MAGI_MODEL_SECONDARY", "qwen3:8b"),
+        small_gpu_vram_mib_threshold=_env_int("MAGI_SMALL_GPU_VRAM_MIB", 14_000),
         backend=os.environ.get("MAGI_BACKEND", "ollama"),
         host=os.environ.get("MAGI_HOST", "http://localhost:11434"),
         auto_instances=_env_bool("MAGI_AUTO_INSTANCES", True),
         auto_spawn_ollama=_env_bool("MAGI_AUTO_SPAWN_OLLAMA", True),
         ollama_command=os.environ.get("MAGI_OLLAMA_COMMAND") or None,
-        ollama_startup_timeout=float(os.environ.get("MAGI_OLLAMA_STARTUP_TIMEOUT", "15.0")),
+        ollama_startup_timeout=float(os.environ.get("MAGI_OLLAMA_STARTUP_TIMEOUT", "30.0")),
         scan_ports=_env_int("MAGI_SCAN_PORTS", 8),
         assignment=os.environ.get("MAGI_ASSIGNMENT", "pooled"),
         max_options=_env_int("MAGI_MAX_OPTIONS", 3),
@@ -163,7 +165,7 @@ async def list_council() -> dict:
         council = get_council(
             os.environ.get("MAGI_COUNCIL", "magi"),
             backend,
-            model=os.environ.get("MAGI_MODEL", "llama3.1:8b"),
+            model=os.environ.get("MAGI_MODEL", "qwen3:14b"),
         )
         return {
             "ok": True,

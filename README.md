@@ -43,7 +43,8 @@ proposal, critique, synthesis, and optionally a vote.
 magi/
 ├── llm/                  # backend abstraction (swap inference engines)
 │   ├── base.py           #   Backend protocol
-│   ├── ollama.py         #   Ollama implementation (ROCm on AMD)
+│   ├── ollama.py         #   Ollama implementation (ROCm / CUDA)
+│   ├── pool.py           #   BackendPool: multi-instance routing
 │   └── __init__.py       #   registry: get_backend("ollama")
 ├── agents/
 │   ├── agent.py          #   Agent dataclass: persona + backend + weight
@@ -57,6 +58,7 @@ magi/
 │   └── __init__.py
 └── cli/
     ├── main.py           #   CLI entry point, wires everything
+    ├── pool_config.py    #   GPU detection, Ollama auto-spawn, pool assembly
     └── options.py        #   derive vote options from the debate
 ```
 
@@ -71,35 +73,44 @@ without touching the orchestrator.
 pip install -e .          # or: pip install -r requirements.txt
 ```
 
-### Ollama on AMD (ROCm)
+### Ollama
 
-Your AMD GPU matters here. Ollama ships an official ROCm build:
+Install from [ollama.com](https://ollama.com). Ollama ships a unified binary that
+selects the right backend at runtime:
+
+- **AMD (ROCm)**: detected automatically from `gfx`-architecture; ROCm 7.x is
+  bundled for RDNA3/RDNA4 (gfx1100–gfx1201).
+- **NVIDIA (CUDA)**: uses the system CUDA driver; CUDA 12+ recommended.
 
 ```bash
-# Linux: the installer pulls the ROCm build automatically if it detects an AMD GPU
-curl -fsSL https://ollama.com/install.sh | sh
-
-ollama serve            # start the server
-rocminfo                # should list your GPU agent
+ollama serve
 ```
 
-Useful env vars for AMD:
+Useful env vars for AMD if your card is not auto-detected:
 
 ```bash
-# if your card isn't on the official support list (common for some RDNA cards),
-# force a compatible gfx version — set to match your chip
+# Force a compatible gfx version — set to match your chip
 export HSA_OVERRIDE_GFX_VERSION=11.0.0
 export OLLAMA_NUM_GPU=999   # push as many layers as possible onto the GPU
 ```
 
-Pull a model:
+### Pull models
+
+MAGI uses two model tiers by default:
+
+| Tier | Default | GPU target | VRAM budget |
+|------|---------|-----------|-------------|
+| Primary | `qwen3:14b` | Large-VRAM GPU (≥ 14 GB) | ~9.3 GB weights + KV cache |
+| Secondary | `qwen3:8b` | Small-VRAM GPU (< 14 GB) | ~5.2 GB weights + KV cache |
 
 ```bash
-ollama pull llama3.1:8b     # default; needs ~8GB+ VRAM
-# smaller alternatives if VRAM is tight:
-ollama pull qwen2.5:7b
-ollama pull phi3:mini
+ollama pull qwen3:14b   # primary — ~9.3 GB
+ollama pull qwen3:8b    # secondary — ~5.2 GB
 ```
+
+Both models support Qwen3's optional **thinking mode** (chain-of-thought
+reasoning before each answer). It is enabled by default (`MAGI_THINK=true`).
+Set `MAGI_THINK=false` to disable it for faster, lower-latency responses.
 
 ## Running
 
@@ -122,38 +133,62 @@ debate before voting, so the vote is grounded in what was actually argued.
 MAGI auto-discovers and auto-spawns local Ollama servers. On startup it scans
 ports starting at `--host` (`11434` through `11441` by default), keeps any live
 servers, detects local GPUs, then starts missing `ollama serve` processes on the
-next free ports so there is one server per detected GPU:
+next free ports — one server per detected GPU:
 
 ```bash
 magi "Should we rewrite the renderer in Rust?" --no-tui
 ```
 
-Useful controls:
+**Per-GPU model selection**: spawned servers on GPUs with less than
+`--small-gpu-vram-mib` (default 14 000 MiB) receive `--model-secondary`
+(`qwen3:8b`) instead of the primary `--model` (`qwen3:14b`). This prevents OOM
+on 12 GB cards while keeping the sharpest model on the 16 GB card. The threshold
+and models are fully configurable:
 
 ```bash
-magi "Compare these architecture options" --scan-ports 12 --no-tui
-magi "Use only the already-running server" --no-auto-spawn-ollama --no-tui
-magi "Use a custom Ollama binary" --ollama-command /path/to/ollama --no-tui
+# Mixed AMD 16 GB (primary) + NVIDIA 12 GB (secondary) — default behaviour:
+magi "Compare these architecture options" --no-tui
+# → port 11434: qwen3:14b on ROCm  (16 GB AMD, VRAM ≥ 14 000 MiB)
+# → port 11435: qwen3:8b  on CUDA  (12 GB NVIDIA, VRAM < 14 000 MiB)
+
+# Override models explicitly:
+magi "..." --model qwen3:14b --model-secondary qwen3:8b --no-tui
+
+# Raise the threshold (e.g. treat 16 GB cards as secondary too):
+magi "..." --small-gpu-vram-mib 17000 --no-tui
+
+# Disable secondary model (use same model everywhere):
+magi "..." --model-secondary qwen3:14b --no-tui
 ```
 
-Auto-spawn is best-effort. GPU detection uses `nvidia-smi` for NVIDIA and
-`rocm-smi`/Windows video-controller detection for AMD. Spawned processes receive
-`OLLAMA_HOST` plus vendor visibility masks (`CUDA_VISIBLE_DEVICES` for NVIDIA;
-`HIP_VISIBLE_DEVICES`, `ROCR_VISIBLE_DEVICES`, and `GPU_DEVICE_ORDINAL` for AMD)
-so each server is intended to bind to one GPU.
+> **Important:** MAGI is **not** splitting one model across vendor backends.
+> Each Ollama server is a separate process bound to one GPU and one runtime
+> (ROCm *or* CUDA). Mixing ROCm and CUDA in a single `llama.cpp` process is not
+> supported. MAGI routes whole chat requests to independent servers — one
+> request, one GPU, one backend family.
+
+Other useful controls:
+
+```bash
+magi "..." --scan-ports 12 --no-tui
+magi "..." --no-auto-spawn-ollama --no-tui   # use only already-running servers
+magi "..." --ollama-command /path/to/ollama --no-tui
+```
+
+Auto-spawn is best-effort. GPU detection uses `nvidia-smi` for NVIDIA
+(including VRAM size) and `rocm-smi`/Windows video-controller detection for AMD.
+Spawned processes receive `OLLAMA_HOST` plus vendor visibility masks
+(`CUDA_VISIBLE_DEVICES` for NVIDIA; `HIP_VISIBLE_DEVICES`, `ROCR_VISIBLE_DEVICES`,
+and `GPU_DEVICE_ORDINAL` for AMD) so each server is pinned to one GPU.
 
 You can still start servers manually if you want full control:
 
 ```bash
-ollama serve
+# AMD (ROCm) on port 11434
+HIP_VISIBLE_DEVICES=0 OLLAMA_HOST=127.0.0.1:11434 ollama serve
 
-OLLAMA_HOST=127.0.0.1:11435 ollama serve
-```
-
-Pull the model on each server environment you intend to use:
-
-```bash
-ollama pull llama3.1:8b
+# NVIDIA (CUDA) on port 11435
+CUDA_VISIBLE_DEVICES=0 OLLAMA_HOST=127.0.0.1:11435 ollama serve
 ```
 
 Assignment policies:
@@ -164,12 +199,6 @@ Assignment policies:
 - `round_robin`: agent index `i` uses instance `i % N`.
 - `pinned`: set an agent's optional `instance` field to an instance name; agents
   without a pin fall back to round-robin.
-
-Mixed NVIDIA + AMD works because MAGI is not splitting one model across vendor
-backends. Each Ollama server is a separate process bound to one local GPU/vendor
-runtime, and MAGI only routes whole chat requests to those independent servers.
-Keep one process per GPU/backend family; do not expect one Ollama model load to
-span NVIDIA CUDA and AMD ROCm at the same time.
 
 Debate rounds are phased. In each round, all agents first produce blind
 proposals concurrently from the same frozen prior transcript. After those
@@ -188,15 +217,13 @@ Install the project dependencies first:
 pip install -e .
 ```
 
-Run the server directly if you want to confirm it imports and waits for MCP
-stdio traffic:
+Run the server directly to confirm it imports and waits for MCP stdio traffic:
 
 ```bash
 python -m magi.mcp.server
 ```
 
-Claude Desktop registration example for
-`claude_desktop_config.json` on this checkout:
+Claude Desktop registration example for `claude_desktop_config.json`:
 
 ```json
 {
@@ -206,7 +233,10 @@ Claude Desktop registration example for
       "args": ["-m", "magi.mcp.server"],
       "cwd": "C:\\Dev\\MAGI",
       "env": {
-        "MAGI_MODEL": "llama3.1:8b",
+        "MAGI_MODEL": "qwen3:14b",
+        "MAGI_MODEL_SECONDARY": "qwen3:8b",
+        "MAGI_SMALL_GPU_VRAM_MIB": "14000",
+        "MAGI_THINK": "true",
         "MAGI_BACKEND": "ollama",
         "MAGI_HOST": "http://localhost:11434",
         "MAGI_ASSIGNMENT": "pooled",
@@ -217,6 +247,10 @@ Claude Desktop registration example for
   }
 }
 ```
+
+Set `"MAGI_THINK": "false"` if you find thinking-mode latency too high for
+interactive use (council rounds will be significantly faster at the cost of
+less explicit chain-of-thought reasoning).
 
 The primary MCP tool is:
 
@@ -310,3 +344,6 @@ on the task topic before the debate starts.
 - **Speed** — propose and critique phases dispatch concurrently. With a single
   local instance, Ollama still serializes the real work; with multiple local
   Ollama servers, automatic discovery and `--assignment pooled` keep them busy.
+  On mixed VRAM hardware (e.g. 16 GB AMD + 12 GB NVIDIA), the secondary model
+  on the smaller card still participates fully and meaningfully; the primary
+  model carries heavier reasoning turns through pooled scheduling.
