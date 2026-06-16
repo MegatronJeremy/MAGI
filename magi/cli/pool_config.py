@@ -16,10 +16,7 @@ from magi.llm import BackendPool
 
 
 DEFAULT_SCAN_PORTS = 8
-DEFAULT_OLLAMA_STARTUP_TIMEOUT = 30.0
-
-
-DEFAULT_SMALL_GPU_VRAM_MIB = 14_000  # GPUs below this threshold use the secondary model
+DEFAULT_OLLAMA_STARTUP_TIMEOUT = 15.0
 
 
 @dataclass(frozen=True)
@@ -27,7 +24,6 @@ class GpuTarget:
     vendor: str
     index: int
     name: str
-    vram_mib: int | None = None  # None means "unknown; assume large"
 
 
 def _parse_host(host: str):
@@ -73,18 +69,15 @@ def _detect_nvidia_gpus() -> list[GpuTarget]:
     if command:
         output = _run_command([
             command,
-            "--query-gpu=index,name,memory.total",
-            "--format=csv,noheader,nounits",
+            "--query-gpu=index,name",
+            "--format=csv,noheader",
         ])
         gpus = []
         for line in output.splitlines():
-            parts = [part.strip() for part in line.split(",")]
-            if len(parts) < 2 or not parts[0].isdigit():
+            parts = [part.strip() for part in line.split(",", 1)]
+            if len(parts) != 2 or not parts[0].isdigit():
                 continue
-            vram_mib: int | None = None
-            if len(parts) >= 3 and parts[2].isdigit():
-                vram_mib = int(parts[2])
-            gpus.append(GpuTarget("nvidia", int(parts[0]), parts[1], vram_mib))
+            gpus.append(GpuTarget("nvidia", int(parts[0]), parts[1]))
         if gpus:
             return gpus
     names = [
@@ -282,36 +275,14 @@ async def build_backend_pool(
                         if port not in live_ports
                     ]
                     missing_targets = gpus[live_count:live_count + len(available_ports)]
-                    model_secondary = getattr(args, "model_secondary", None) or args.model
-                    small_vram_mib = getattr(
-                        args, "small_gpu_vram_mib_threshold", DEFAULT_SMALL_GPU_VRAM_MIB
-                    )
-                    spawned_port_models: dict[int, str] = {}
                     spawned = 0
                     for target, port in zip(missing_targets, available_ports):
                         if _spawn_ollama_server(command, target, hostname, port, warn):
                             spawned += 1
-                            is_small = (
-                                target.vram_mib is not None
-                                and target.vram_mib < small_vram_mib
-                            )
-                            assigned_model = model_secondary if is_small else args.model
-                            spawned_port_models[port] = assigned_model
-                            if is_small and assigned_model != args.model:
-                                warn(
-                                    f"GPU {target.name} has {target.vram_mib} MiB VRAM "
-                                    f"(< {small_vram_mib} MiB threshold); "
-                                    f"assigning secondary model {assigned_model!r}"
-                                )
                     if spawned:
                         expected_count = min(len(gpus), scan_ports, live_count + spawned)
                         pool = await _wait_for_spawned_servers(args, warn, expected_count)
                         live_count = len(pool.instances)
-                        # Patch per-instance model for small-VRAM spawned servers.
-                        for instance in pool.instances:
-                            port = _instance_port(instance)
-                            if port in spawned_port_models:
-                                instance.model = spawned_port_models[port]
                 else:
                     warn("WARNING could not find ollama executable; skipping auto-spawn")
             elif not gpus:

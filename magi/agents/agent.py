@@ -18,7 +18,7 @@ class Agent:
     name: str
     persona: str
     backend: Backend
-    model: str = "qwen3:14b"
+    model: str = "llama3.1:8b"
     temperature: float = 0.7
     vote_temperature: float = 0.6  # keep variance at vote time; 0.2 funneled all agents to the same answer
     weight: float = 1.0  # used by the weighted/aristocratic voting layer

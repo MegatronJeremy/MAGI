@@ -56,7 +56,7 @@ class BackendPool:
         *,
         assignment: str = "pooled",
         default_backend: str = "ollama",
-        default_model: str = "qwen3:14b",
+        default_model: str = "llama3.1:8b",
         warn: Callable[[str], None] | None = None,
     ) -> "BackendPool":
         from . import get_backend
@@ -86,7 +86,7 @@ class BackendPool:
         *,
         backend_name: str = "ollama",
         host: str = "http://localhost:11434",
-        model: str = "qwen3:14b",
+        model: str = "llama3.1:8b",
         assignment: str = "pooled",
         warn: Callable[[str], None] | None = None,
     ) -> "BackendPool":

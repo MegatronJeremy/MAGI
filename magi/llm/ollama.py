@@ -6,16 +6,7 @@ Ollama uses its ROCm build; see README for the env vars that matter.
 
 from __future__ import annotations
 
-import os
-
 import httpx
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    return value.casefold() in {"1", "true", "yes", "on"}
 
 
 class OllamaBackend:
@@ -39,7 +30,6 @@ class OllamaBackend:
                 {"role": "user", "content": user},
             ],
             "stream": False,
-            "think": kwargs.pop("think", _env_bool("MAGI_THINK", True)),
             "options": {"temperature": temperature, **kwargs.get("options", {})},
         }
         async with httpx.AsyncClient(timeout=self.timeout) as client:

@@ -18,7 +18,6 @@ from .runner import TALLY_CHOICES, run_council
 from .pool_config import (
     DEFAULT_OLLAMA_STARTUP_TIMEOUT,
     DEFAULT_SCAN_PORTS,
-    DEFAULT_SMALL_GPU_VRAM_MIB,
 )
 
 
@@ -96,13 +95,7 @@ def main():
     p.add_argument("--options", nargs="+", default=None,
                    help="Explicit vote options; derived from debate if omitted")
     p.add_argument("--council", default="magi", help="Council preset (default: magi)")
-    p.add_argument("--model", default="qwen3:14b", help="Ollama model tag (primary / large-VRAM GPU)")
-    p.add_argument("--model-secondary", dest="model_secondary", default="qwen3:8b",
-                   help="Model for GPUs below --small-gpu-vram-mib (default: qwen3:8b)")
-    p.add_argument("--small-gpu-vram-mib", dest="small_gpu_vram_mib_threshold",
-                   type=int, default=DEFAULT_SMALL_GPU_VRAM_MIB,
-                   help=f"VRAM threshold in MiB below which the secondary model is used "
-                        f"(default: {DEFAULT_SMALL_GPU_VRAM_MIB})")
+    p.add_argument("--model", default="llama3.1:8b", help="Ollama model tag")
     p.add_argument("--backend", default="ollama", help="LLM backend (default: ollama)")
     p.add_argument("--host", default="http://localhost:11434", help="Backend host URL")
     p.add_argument("--auto-instances", dest="auto_instances", action="store_true", default=True,
@@ -116,7 +109,7 @@ def main():
     p.add_argument("--ollama-command", default=None,
                    help="Path to the ollama executable for auto-spawn")
     p.add_argument("--ollama-startup-timeout", type=float, default=DEFAULT_OLLAMA_STARTUP_TIMEOUT,
-                   help=f"Seconds to wait for spawned Ollama servers (default {DEFAULT_OLLAMA_STARTUP_TIMEOUT:g}s)")
+                   help=f"Seconds to wait for spawned Ollama servers (default {DEFAULT_OLLAMA_STARTUP_TIMEOUT:g})")
     p.add_argument("--scan-ports", type=int, default=DEFAULT_SCAN_PORTS,
                    help=f"Number of local Ollama ports to scan from --host (default {DEFAULT_SCAN_PORTS})")
     p.add_argument("--assignment", choices=["round_robin", "pinned", "pooled"], default="pooled",
